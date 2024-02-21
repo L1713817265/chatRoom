@@ -45,6 +45,10 @@ static void writeData(int fd, int *data, int dataSize);
 static void registerUser(int socketfd);
 /* 用户登录函数 */
 static int loginUser(int socketfd);
+/* 客户端退出函数 */
+static void clientExit(int socketfd, int mainMenufd, int funcMenufd);
+/* 用户退出函数 */
+static void exitUser(int socketfd, int *flag);
 /* 聊天记录显示函数 */
 static void chatContentDisplay();
 
@@ -145,24 +149,8 @@ int main()
         
         /* 退出 */
         case EXIT:
-            char response[BUFFER_SIZE];
-            bzero(response, sizeof(response));
-            /* 接收服务器的响应 */
-            readMessage(socketfd, response, sizeof(response) - 1);
-
-            /* 解析服务器的响应并进行处理 */
-            if(strncmp(response, "客户端退出", sizeof("客户端退出")) == 0)
-            {
-                printf("客户端退出\n");
-                sleep(1);
-                close(mainMenu);
-                close(funcMenu);
-                exit(-1);
-            }
-            else
-            {
-                printf("客户端退出失败\n");
-            }
+            /* 客户端退出函数 */
+            clientExit(socketfd, mainMenu, funcMenu);
             break;
 
         default:
@@ -236,25 +224,8 @@ int main()
 
             /* 退出 */
             case INTERNAL_EXIT:
-                char response[BUFFER_SIZE];
-                bzero(response, sizeof(response));
-                /* 接收服务器的响应 */
-                readMessage(socketfd, response, sizeof(response) - 1);
-
-                /* 解析服务器的响应并进行处理 */
-                if(strncmp(response, "账户退出", sizeof("账户退出")) == 0)
-                {
-                    printf("账户退出\n");
-                    sleep(1);
-                    system("clear");
-                    flag = 0;
-                }
-                else if(strncmp(response, "账户退出失败", sizeof("账户退出失败")) == 0)
-                {
-                    printf("账户退出失败\n");
-                    sleep(1);
-                    system("clear");
-                }
+                /* 用户退出函数 */
+                exitUser(socketfd, &flag);
                 break;
 
             default:
@@ -324,6 +295,36 @@ static void registerUser(int socketfd)
     }
 }
 
+/* 用户私聊函数 */
+static void chatUser(int socketfd)
+{
+    char objectName[DEFAULT_LOGIN_NAME];
+    bzero(objectName, sizeof(objectName));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+
+    /* 打开好友列表 */
+
+    /* 选择好友 */
+    printf("请输入私聊对象：");
+    scanf("%s", objectName);
+    /* 发送私聊对象名称给服务器 */
+    writeMessage(socketfd, objectName, sizeof(objectName) - 1);
+
+    /* 接收服务器的响应 */
+    readMessage(socketfd, response, sizeof(response) - 1);
+
+    /* 解析服务器的响应并进行处理 */
+    if(strncmp(response, "对方在线", sizeof("对方在线")) == 0)
+    {
+        printf("对方在线\n");
+    }
+    else if(strncmp(response, "对方不在线", sizeof("对方不在线")) == 0)
+    {
+        printf("对方不在线\n");
+    }
+}
+
 /* 用户登录函数 */
 static int loginUser(int socketfd)
 {
@@ -371,6 +372,53 @@ static int loginUser(int socketfd)
     {
         printf("系统出错\n");
         exit(-1);
+    }
+}
+
+/* 客户端退出函数 */
+static void clientExit(int socketfd, int mainMenufd, int funcMenufd)
+{
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    /* 接收服务器的响应 */
+    readMessage(socketfd, response, sizeof(response) - 1);
+
+    /* 解析服务器的响应并进行处理 */
+    if(strncmp(response, "客户端退出", sizeof("客户端退出")) == 0)
+    {
+        printf("客户端退出\n");
+        sleep(1);
+        close(mainMenufd);
+        close(funcMenufd);
+        exit(-1);
+    }
+    else
+    {
+        printf("客户端退出失败\n");
+    }
+}
+
+/* 用户退出函数 */
+static void exitUser(int socketfd, int *flag)
+{
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    /* 接收服务器的响应 */
+    readMessage(socketfd, response, sizeof(response) - 1);
+
+    /* 解析服务器的响应并进行处理 */
+    if(strncmp(response, "账户退出", sizeof("账户退出")) == 0)
+    {
+        printf("账户退出\n");
+        sleep(1);
+        system("clear");
+        flag = 0;
+    }
+    else if(strncmp(response, "账户退出失败", sizeof("账户退出失败")) == 0)
+    {
+        printf("账户退出失败\n");
+        sleep(1);
+        system("clear");
     }
 }
 

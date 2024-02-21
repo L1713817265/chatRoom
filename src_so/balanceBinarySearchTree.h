@@ -72,4 +72,7 @@ int balanceBinarySearchTreeDestroy(BalanceBinarySearchTree *pBstree);
 /* 判断二叉搜索树是否是完全二叉树 */
 int balanceBinarySearchTreeIsComplete(BalanceBinarySearchTree *pBSTree);
 
+/* 根据指定的值获取二叉搜索树的结点 */
+AVLTreeNode * baseAppointValGetAVLTreeNode(BalanceBinarySearchTree *pBstree, ELEMENTTYPE val);
+
 #endif  //__BINARY_SEARCH_TREE_H_
