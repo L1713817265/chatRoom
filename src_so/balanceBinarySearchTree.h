@@ -2,38 +2,29 @@
 #define __BINARY_SEARCH_TREE_H_
 
 #include "common.h"
-// #define ELEMENTTYPE int
 
 typedef struct AVLTreeNode
 {
     ELEMENTTYPE data;
     /* 结点维护一个高度属性 */
     int height;
-    struct AVLTreeNode *left;        /* 左子树 */
-    struct AVLTreeNode *right;       /* 右子树 */
-    #if 1
-    struct AVLTreeNode *parent;      /* 父结点 */
-    #endif
+    struct AVLTreeNode *left;    /* 左子树 */
+    struct AVLTreeNode *right;   /* 右子树 */
+    struct AVLTreeNode *parent;  /* 父结点 */
 } AVLTreeNode;
 
 typedef struct BalanceBinarySearchTree
-{   
+{
     /* 根结点 */
-    AVLTreeNode * root;
-    /* 树的结点个数 */
+    AVLTreeNode *root;
+    /* 树的节点个数 */
     int size;
 
-    /* 钩子🪝函数比较器 放到结构体内部. */
+    /* 钩子函数比较器 放到这个地方 */
     int (*compareFunc)(ELEMENTTYPE val1, ELEMENTTYPE val2);
 
-    /* 钩子🪝函数 包装器实现自定义打印函数接口. */
+    /* 钩子函数包装器 实现自定义打印函数接口 */
     int (*printFunc)(ELEMENTTYPE val);
-
-#if 0
-    /* 把队列的属性 放到树里面 */
-    DoubleLinkListQueue *pQueue;
-#endif
-
 } BalanceBinarySearchTree;
 
 /* 二叉搜索树的初始化 */
@@ -58,21 +49,17 @@ int balanceBinarySearchTreePostOrderTravel(BalanceBinarySearchTree *pBstree);
 int balanceBinarySearchTreeLevelOrderTravel(BalanceBinarySearchTree *pBstree);
 
 /* 获取二叉搜索树的结点个数 */
-int balanceBinarySearchTreeGetNodeSize(BalanceBinarySearchTree *pBstree, int *pSize);
+int balanceBinarySearchTreeGetNodeSize(BalanceBinarySearchTree *pBtree, int *pSize);
 
 /* 获取二叉搜索树的高度 */
-int balanceBinarySearchTreeGetHeight(BalanceBinarySearchTree *pBstree, int *pHeight);
+int balanceBinarySearchTreeGetHeight(BalanceBinarySearchTree *pBtree, int *pHeight);
 
-/* 二叉搜索树的删除 */
+/* 二叉搜索树的删除*/
 int balanceBinarySearchTreeDelete(BalanceBinarySearchTree *pBstree, ELEMENTTYPE val);
 
 /* 二叉搜索树的销毁 */
 int balanceBinarySearchTreeDestroy(BalanceBinarySearchTree *pBstree);
 
-/* 判断二叉搜索树是否是完全二叉树 */
-int balanceBinarySearchTreeIsComplete(BalanceBinarySearchTree *pBSTree);
-
 /* 根据指定的值获取二叉搜索树的结点 */
 AVLTreeNode * baseAppointValGetAVLTreeNode(BalanceBinarySearchTree *pBstree, ELEMENTTYPE val);
-
-#endif  //__BINARY_SEARCH_TREE_H_
+#endif

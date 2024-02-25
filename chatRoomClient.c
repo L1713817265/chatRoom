@@ -10,6 +10,7 @@
 #include <strings.h>
 #include <string.h>
 #include <sqlite3.h>
+#include <pthread.h>
 
 #define SERVER_PORT 8080
 // #define SERVER_ADDR "172.30.149.120"
@@ -18,6 +19,7 @@
 #define DEFAULT_LOGIN_NAME  20
 #define DEFAULT_LOGIN_PAWD  16
 #define BUFFER_SIZE 300
+#define BUFFER_SQL          100
 
 /* 主界面选择 */
 enum CLIENT_CHOICE
@@ -35,6 +37,12 @@ enum FUNC_CHOICE
     INTERNAL_EXIT,
 };
 
+typedef struct sendPackage
+{
+    char loginName[DEFAULT_LOGIN_NAME];
+    int communicateFd;
+} sendPackage;
+
 /* 信息写入判断函数 */
 static void writeMessage(int fd, char *message, int messageSize);
 /* 信息读取判断函数 */
@@ -42,15 +50,55 @@ static void readMessage(int fd, char *message, int messageSize);
 /* 数据写入判断函数 */
 static void writeData(int fd, int *data, int dataSize);
 /* 用户注册函数 */
-static void registerUser(int socketfd);
+static void userRegister(int socketfd);
 /* 用户登录函数 */
-static int loginUser(int socketfd);
+static int userLogin(int socketfd, char *loginName);
 /* 客户端退出函数 */
 static void clientExit(int socketfd, int mainMenufd, int funcMenufd);
 /* 用户退出函数 */
-static void exitUser(int socketfd, int *flag);
-/* 聊天记录显示函数 */
-static void chatContentDisplay();
+static int userExit(int socketfd);
+/* 用户私聊函数 */
+static int chatUser(int socketfd, char *loginName);
+
+/* 回调函数，用于处理查询结果 */
+int callback(void* data, int argc, char** argv, char** azColName) 
+{
+    if (argc == 0) 
+    {
+        *(int *)data = 0;
+    } 
+    else 
+    {
+        *(int *)data = 1;
+    }
+    return 0;
+}
+
+/* 私聊接收信息线程 */
+void * recvMessage(void *arg)
+{
+    /* 线程分离 */
+    pthread_detach(pthread_self());
+    char recvBuffer[BUFFER_SIZE];
+    bzero(recvBuffer, sizeof(recvBuffer));
+    
+    int ret = 0;
+    while(1)
+    {
+        ret = read(*(int *)arg, recvBuffer, sizeof(recvBuffer));
+        if(ret > 0)
+        {
+            if(strncmp(recvBuffer, "退出聊天", sizeof("退出聊天")) == 0)
+            {
+                pthread_exit(NULL);
+            }
+            else
+            {
+                printf("%s\n", recvBuffer);
+            }
+        }
+    }
+}
 
 int main()
 {
@@ -129,21 +177,24 @@ int main()
         /* 清空输入缓冲区 */
         system("clear");
 
+        /* 登录用户名 */
+        char loginName[BUFFER_SIZE];
+        bzero(loginName, sizeof(loginName));
         switch (choice)
         {
         /* 注册 */
         case REGISTER:
             /* 用户注册并创建好友列表 */
-            registerUser(socketfd);
-            sleep(2);
+            userRegister(socketfd);
+            sleep(1);
             system("clear");
             break;
         
         /* 登录 */
         case LOG_IN:
             /* 用户登录函数 */
-            flag = loginUser(socketfd);
-            sleep(2);
+            flag = userLogin(socketfd, loginName);
+            sleep(1);
             system("clear");
             break;
         
@@ -156,13 +207,6 @@ int main()
         default:
             break;
         }
-
-        /* 客户端缓冲区 */
-        char cliRecvBuffer[BUFFER_SIZE];
-        bzero(cliRecvBuffer, sizeof(cliRecvBuffer));
-        /* 服务器缓冲区 */
-        char serRecvBuffer[BUFFER_SIZE];
-        bzero(serRecvBuffer, sizeof(serRecvBuffer));
 
         int connect = 0;
         int readBytes = 0;
@@ -188,33 +232,7 @@ int main()
             {
             /* 私聊 */
             case PRIVATE_CHAT:
-                printf("选择私聊好友：\n");
-                scanf("%s", cliRecvBuffer);
-                write(socketfd, cliRecvBuffer, sizeof(cliRecvBuffer));
-                int readBytes = read(socketfd, serRecvBuffer, sizeof(serRecvBuffer) - 1);
-                if(strncmp(serRecvBuffer, "对方在线", readBytes) == 0)
-                {
-                    printf("%s\n", serRecvBuffer);
-                    sleep(3);
-                    system("clear");
-                    connect = 1;
-                }
-                else
-                {
-                    printf("%s\n", serRecvBuffer);
-                    sleep(3);
-                    system("clear");
-                    connect = 0;
-                }
-                while(connect)
-                {
-                    chatContentDisplay();
-                    printf("请输入文字：\n");
-                    scanf("%s", cliRecvBuffer);
-                    write(socketfd, cliRecvBuffer, sizeof(cliRecvBuffer));
-                    sleep(1);
-                    system("clear");
-                }
+                chatUser(socketfd, loginName);
                 break;
 
             /* 加好友 */
@@ -225,7 +243,7 @@ int main()
             /* 退出 */
             case INTERNAL_EXIT:
                 /* 用户退出函数 */
-                exitUser(socketfd, &flag);
+                flag = userExit(socketfd);
                 break;
 
             default:
@@ -237,7 +255,7 @@ int main()
 }
 
 /* 用户注册函数 */
-static void registerUser(int socketfd)
+static void userRegister(int socketfd)
 {
     char username[DEFAULT_LOGIN_NAME];
     bzero(username, sizeof(username));
@@ -256,6 +274,7 @@ static void registerUser(int socketfd)
     writeMessage(socketfd, password, sizeof(password) - 1);
 
     /* 接收服务器的响应 */
+    bzero(response, sizeof(response));
     readMessage(socketfd, response, sizeof(response) - 1);
 
     /* 解析服务器的响应并进行处理 */
@@ -273,13 +292,13 @@ static void registerUser(int socketfd)
         exit(-1);
     }
     /* 创建好友列表 */
-    sqlite3 *db = NULL;
+    sqlite3 *chatRoomDB = NULL;
     char friendlistname[BUFFER_SIZE];
     bzero(friendlistname, sizeof(friendlistname));
     strncat(friendlistname, username, sizeof(username));
     strncat(friendlistname, "FriendList.db", sizeof("FriendList.db"));
     /* 打开数据库：如果数据库不存在，那么就创建 */
-    int ret = sqlite3_open(friendlistname, &db);
+    int ret = sqlite3_open(friendlistname, &chatRoomDB);
     if(ret != SQLITE_OK)
     {
         perror("sqlite open error");
@@ -287,7 +306,7 @@ static void registerUser(int socketfd)
     }
     char * errormsg = NULL;
     const char *sql = "create table if not exists friendlist (username text not NULL)";
-    ret = sqlite3_exec(db, sql, NULL, NULL, &errormsg);
+    ret = sqlite3_exec(chatRoomDB, sql, NULL, NULL, &errormsg);
     if(ret != SQLITE_OK)
     {
         printf("sqlite exec error: %s\n", errormsg);
@@ -296,38 +315,140 @@ static void registerUser(int socketfd)
 }
 
 /* 用户私聊函数 */
-static void chatUser(int socketfd)
+static int chatUser(int socketfd, char *loginName)
 {
     char objectName[DEFAULT_LOGIN_NAME];
     bzero(objectName, sizeof(objectName));
+    char sendBuffer[BUFFER_SIZE];
+    bzero(sendBuffer, sizeof(sendBuffer));
     char response[BUFFER_SIZE];
     bzero(response, sizeof(response));
+    
+    sqlite3 * chatRoomDB = NULL;
+    char * ermsg = NULL;
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
+    int flag = 0;
+    pthread_t recv;
 
-    /* 打开好友列表 */
-
-    /* 选择好友 */
-    printf("请输入私聊对象：");
-    scanf("%s", objectName);
-    /* 发送私聊对象名称给服务器 */
-    writeMessage(socketfd, objectName, sizeof(objectName) - 1);
-
-    /* 接收服务器的响应 */
-    readMessage(socketfd, response, sizeof(response) - 1);
-
-    /* 解析服务器的响应并进行处理 */
-    if(strncmp(response, "对方在线", sizeof("对方在线")) == 0)
+    while(1)
     {
-        printf("对方在线\n");
-    }
-    else if(strncmp(response, "对方不在线", sizeof("对方不在线")) == 0)
-    {
-        printf("对方不在线\n");
+        /* 打开好友列表 */
+        char friendList[BUFFER_SIZE];
+        bzero(friendList, sizeof(friendList));
+        strncpy(friendList, loginName, sizeof(loginName) - 1);
+        strncat(friendList, "FriendList.db", strlen("FriendList.db") + 1);
+        /* 打开数据库 */
+        int ret = sqlite3_open(friendList, &chatRoomDB);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite open error");
+            exit(-1);
+        }
+        sprintf(sql, "select * from friendlist");
+        char **result = NULL;
+        int row = 0;
+        sqlite3_get_table(chatRoomDB, sql, &result, &row, NULL, &ermsg);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite get table error");
+            exit(-1);
+        }
+        /* 打印好友列表 */
+        printf("好友列表\n");
+        for(int idx = 1; idx <= row; idx++)
+        {
+            printf("%s\n", result[idx]);
+        }
+        printf("----\n");
+        /* 选择好友 */
+        bzero(objectName, sizeof(objectName));
+        printf("请输入私聊对象：\n");
+        char c = '0';
+        scanf("%s", objectName);
+        while ((c = getchar()) != EOF && c != '\n');
+        if(strncmp(objectName, "q", sizeof(objectName)) == 0)
+        {
+            writeMessage(socketfd, objectName, strlen(objectName));
+            system("clear");
+            break;
+        }
+        /* 检查对象是否在好友列表中 */
+        int found = 0;
+        sprintf(sql, "select * from friendlist where username = '%s'", objectName);
+        ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite open error");
+            exit(-1);
+        }
+        if(found == 0)
+        {
+            /* 对象不存在 */
+            writeMessage(socketfd, "该对象非好友", strlen("该对象非好友"));
+            printf("该对象非好友\n");
+            sleep(1);
+            system("clear");
+        }
+        else if(found == 1)
+        {
+            /* 对象存在 */
+            /* 发送私聊对象名称给服务器 */
+            writeMessage(socketfd, objectName, strlen(objectName));
+            /* 接收服务器的响应 */
+            bzero(response, sizeof(response));
+            readMessage(socketfd, response, sizeof(response) - 1);
+
+            /* 解析服务器的响应并进行处理 */
+            if(strncmp(response, "对方在线", sizeof("对方在线")) == 0)
+            {
+                printf("对方在线\n");
+                flag = 1;
+                sleep(1);
+                system("clear");
+
+                pthread_create(&recv, NULL, recvMessage, (void *)&socketfd);
+                char sendCompleteBuffer[BUFFER_SIZE + 2 * DEFAULT_LOGIN_NAME];
+                bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
+                
+                while(flag)
+                {
+                    char c = '0';
+                    scanf("%s", sendBuffer);
+                    while ((c = getchar()) != EOF && c != '\n');
+                    if(strncmp(sendBuffer, "q", sizeof(sendBuffer)) == 0)
+                    {
+                        writeMessage(socketfd, sendBuffer, strlen(sendBuffer));
+                        flag = 0;
+                        system("clear");
+                        printf("%s\n", sendBuffer);
+                        break;
+                    }
+                    else
+                    {
+                        sprintf(sendCompleteBuffer, "%s: %s", loginName, sendBuffer);
+                        writeMessage(socketfd, sendCompleteBuffer, strlen(sendCompleteBuffer));
+                        bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
+                    }
+                }
+            }
+            else if(strncmp(response, "对方不在线", sizeof("对方不在线")) == 0)
+            {
+                printf("对方不在线\n");
+                flag = 0;
+                sleep(1);
+                system("clear");
+            }
+        }
+        /* 关闭数据库 */
+        sqlite3_close(chatRoomDB);
     }
 }
 
 /* 用户登录函数 */
-static int loginUser(int socketfd)
+static int userLogin(int socketfd, char *loginName)
 {
+    int flag = 0;
     char username[DEFAULT_LOGIN_NAME];
     bzero(username, sizeof(username));
     char password[DEFAULT_LOGIN_PAWD];
@@ -345,34 +466,34 @@ static int loginUser(int socketfd)
     writeMessage(socketfd, password, sizeof(password) - 1);
 
     /* 接收服务器的响应 */
+    bzero(response, sizeof(response));
     readMessage(socketfd, response, sizeof(response) - 1);
 
     /* 解析服务器的响应并进行处理 */
     if(strncmp(response, "登录成功", sizeof("登录成功")) == 0)
     {
         printf("登录成功\n");
-        return 1;
+        strncpy(loginName, username, sizeof(username));
+        flag = 1;
     }
     else if(strncmp(response, "用户已在别处登录", sizeof("用户已在别处登录")) == 0)
     {
         printf("用户已在别处登录\n");
-        return 0;
     }
     else if(strncmp(response, "密码错误", sizeof("密码错误")) == 0)
     {
         printf("密码错误\n");
-        return 0;
     }
     else if(strncmp(response, "用户不存在", sizeof("用户不存在")) == 0)
     {
         printf("用户不存在\n");
-        return 0;
     }
     else
     {
         printf("系统出错\n");
         exit(-1);
     }
+    return flag;
 }
 
 /* 客户端退出函数 */
@@ -381,6 +502,7 @@ static void clientExit(int socketfd, int mainMenufd, int funcMenufd)
     char response[BUFFER_SIZE];
     bzero(response, sizeof(response));
     /* 接收服务器的响应 */
+    bzero(response, sizeof(response));
     readMessage(socketfd, response, sizeof(response) - 1);
 
     /* 解析服务器的响应并进行处理 */
@@ -388,6 +510,7 @@ static void clientExit(int socketfd, int mainMenufd, int funcMenufd)
     {
         printf("客户端退出\n");
         sleep(1);
+        system("clear");
         close(mainMenufd);
         close(funcMenufd);
         exit(-1);
@@ -399,67 +522,30 @@ static void clientExit(int socketfd, int mainMenufd, int funcMenufd)
 }
 
 /* 用户退出函数 */
-static void exitUser(int socketfd, int *flag)
+static int userExit(int socketfd)
 {
+    int flag = 1;
     char response[BUFFER_SIZE];
     bzero(response, sizeof(response));
     /* 接收服务器的响应 */
+    bzero(response, sizeof(response));
     readMessage(socketfd, response, sizeof(response) - 1);
 
     /* 解析服务器的响应并进行处理 */
-    if(strncmp(response, "账户退出", sizeof("账户退出")) == 0)
+    if(strncmp(response, "用户退出", sizeof("用户退出")) == 0)
     {
-        printf("账户退出\n");
+        printf("用户退出\n");
         sleep(1);
         system("clear");
         flag = 0;
     }
-    else if(strncmp(response, "账户退出失败", sizeof("账户退出失败")) == 0)
+    else
     {
-        printf("账户退出失败\n");
+        printf("用户退出失败\n");
         sleep(1);
         system("clear");
     }
-}
-
-/* 聊天记录显示函数 */
-static void chatContentDisplay()
-{
-    sqlite3 *db = NULL;
-    const char *sql = NULL;
-    char * errormsg = NULL;
-    char **result = NULL;
-    int start = 1;
-    int row = 0;
-    int column = 0;
-
-    int ret = sqlite3_open("aa->bb.db", &db);
-    if(ret != SQLITE_OK)
-    {
-        perror("sqlite open error");
-        exit(-1);
-    }
-
-    sql = "select *from chat";
-    ret = sqlite3_get_table(db, sql, &result, &row, &column, &errormsg);
-    if(ret != SQLITE_OK)
-    {
-        printf("sqlite_exec_error: %s\n", errormsg);
-        exit(-1);
-    }
-    if(row > 10)
-    {
-        start = row - 9;
-    }
-
-    for(int idx = start; idx <= row; idx++)
-    {
-        printf("%s:", result[idx * column]);
-        printf("%s\n", result[idx * column + 1]);
-    }
-
-    /* 关闭数据库 */
-    sqlite3_close(db);
+    return flag;
 }
 
 /* 信息写入判断函数 */

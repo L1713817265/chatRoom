@@ -816,7 +816,7 @@ int balanceBinarySearchTreeGetHeight(BalanceBinarySearchTree *pBstree, int *pHei
     return ret;
 }
 
-static int balanceBinarySearchTreeDeleteNode(BalanceBinarySearchTree *pBstree, AVLTreeNode *node)
+static int  balanceBinarySearchTreeDeleteNode(BalanceBinarySearchTree *pBstree, AVLTreeNode *node)
 {
     int ret = 0;
     if (node == NULL)
@@ -967,6 +967,12 @@ int balanceBinarySearchTreeDestroy(BalanceBinarySearchTree *pBstree)
     if (pBstree == NULL)
     {
         return NULL_PTR;
+    }
+
+    /* 空树 */
+    if (pBstree->root == NULL)
+    {
+        return ON_SUCCESS;
     }
 
     int ret;
