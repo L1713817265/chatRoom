@@ -34,6 +34,8 @@ enum FUNC_CHOICE
 {
     PRIVATE_CHAT = 1,
     FRIEND_ADD,
+    GROUP_CHAT,
+    GROUP_CREATE,
     INTERNAL_EXIT,
 };
 
@@ -58,7 +60,9 @@ static void clientExit(int socketfd, int mainMenufd, int funcMenufd);
 /* 用户退出函数 */
 static int userExit(int socketfd);
 /* 用户私聊函数 */
-static int chatUser(int socketfd, char *loginName);
+static int privateChat(int socketfd, char *loginName);
+/* 用户群聊函数 */
+static int groupChat(int socketfd, char *loginName);
 
 /* 回调函数，用于处理查询结果 */
 int callback(void* data, int argc, char** argv, char** azColName) 
@@ -85,10 +89,15 @@ void * recvMessage(void *arg)
     int ret = 0;
     while(1)
     {
+        bzero(recvBuffer, sizeof(recvBuffer));
         ret = read(*(int *)arg, recvBuffer, sizeof(recvBuffer));
         if(ret > 0)
         {
             if(strncmp(recvBuffer, "退出聊天", sizeof("退出聊天")) == 0)
+            {
+                pthread_exit(NULL);
+            }
+            else if(strncmp(recvBuffer, "退出群聊", sizeof("退出群聊")) == 0)
             {
                 pthread_exit(NULL);
             }
@@ -221,7 +230,7 @@ int main()
             printf("请选择你需要的功能：\n");
             fgets(input2, sizeof(input2), stdin);
             sscanf(input2, "%d", &mode);
-            if(mode >= 1 && mode <= 3)
+            if(mode >= 1 && mode <= 5)
             {
                 writeData(socketfd, &mode, sizeof(mode));
             }
@@ -232,11 +241,21 @@ int main()
             {
             /* 私聊 */
             case PRIVATE_CHAT:
-                chatUser(socketfd, loginName);
+                privateChat(socketfd, loginName);
                 break;
 
             /* 加好友 */
             case FRIEND_ADD:
+                
+                break;
+
+            /* 群聊 */
+            case GROUP_CHAT:
+                groupChat(socketfd, loginName);
+                break;
+
+            /* 建群 */
+            case GROUP_CREATE:
                 
                 break;
 
@@ -263,6 +282,8 @@ static void userRegister(int socketfd)
     bzero(password, sizeof(password));
     char response[BUFFER_SIZE];
     bzero(response, sizeof(response));
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
 
     printf("请输入用户名：");
     scanf("%s", username);
@@ -297,6 +318,10 @@ static void userRegister(int socketfd)
     bzero(friendlistname, sizeof(friendlistname));
     strncat(friendlistname, username, sizeof(username));
     strncat(friendlistname, "FriendList.db", sizeof("FriendList.db"));
+    char grouplistname[BUFFER_SIZE];
+    bzero(grouplistname, sizeof(grouplistname));
+    strncat(grouplistname, username, sizeof(username));
+    strncat(grouplistname, "GroupList.db", sizeof("GroupList.db"));
     /* 打开数据库：如果数据库不存在，那么就创建 */
     int ret = sqlite3_open(friendlistname, &chatRoomDB);
     if(ret != SQLITE_OK)
@@ -304,18 +329,32 @@ static void userRegister(int socketfd)
         perror("sqlite open error");
         exit(-1);
     }
-    char * errormsg = NULL;
-    const char *sql = "create table if not exists friendlist (username text not NULL)";
-    ret = sqlite3_exec(chatRoomDB, sql, NULL, NULL, &errormsg);
+    char * ermsg = NULL;
+    sprintf(sql, "create table if not exists friendlist (username text not NULL)");
+    ret = sqlite3_exec(chatRoomDB, sql, NULL, NULL, &ermsg);
     if(ret != SQLITE_OK)
     {
-        printf("sqlite exec error: %s\n", errormsg);
+        printf("sqlite exec error: %s\n", ermsg);
+        exit(-1);
+    }
+    /* 打开数据库：如果数据库不存在，那么就创建 */
+    ret = sqlite3_open(grouplistname, &chatRoomDB);
+    if(ret != SQLITE_OK)
+    {
+        perror("sqlite open error");
+        exit(-1);
+    }
+    sprintf(sql, "create table if not exists grouplist (groupname text not NULL)");
+    ret = sqlite3_exec(chatRoomDB, sql, NULL, NULL, &ermsg);
+    if(ret != SQLITE_OK)
+    {
+        printf("sqlite exec error: %s\n", ermsg);
         exit(-1);
     }
 }
 
 /* 用户私聊函数 */
-static int chatUser(int socketfd, char *loginName)
+static int privateChat(int socketfd, char *loginName)
 {
     char objectName[DEFAULT_LOGIN_NAME];
     bzero(objectName, sizeof(objectName));
@@ -364,9 +403,7 @@ static int chatUser(int socketfd, char *loginName)
         /* 选择好友 */
         bzero(objectName, sizeof(objectName));
         printf("请输入私聊对象：\n");
-        char c = '0';
         scanf("%s", objectName);
-        while ((c = getchar()) != EOF && c != '\n');
         if(strncmp(objectName, "q", sizeof(objectName)) == 0)
         {
             writeMessage(socketfd, objectName, strlen(objectName));
@@ -413,6 +450,8 @@ static int chatUser(int socketfd, char *loginName)
                 
                 while(flag)
                 {
+                    bzero(sendBuffer, sizeof(sendBuffer));
+                    bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
                     char c = '0';
                     scanf("%s", sendBuffer);
                     while ((c = getchar()) != EOF && c != '\n');
@@ -421,20 +460,149 @@ static int chatUser(int socketfd, char *loginName)
                         writeMessage(socketfd, sendBuffer, strlen(sendBuffer));
                         flag = 0;
                         system("clear");
-                        printf("%s\n", sendBuffer);
                         break;
                     }
                     else
                     {
                         sprintf(sendCompleteBuffer, "%s: %s", loginName, sendBuffer);
                         writeMessage(socketfd, sendCompleteBuffer, strlen(sendCompleteBuffer));
-                        bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
                     }
                 }
             }
             else if(strncmp(response, "对方不在线", sizeof("对方不在线")) == 0)
             {
                 printf("对方不在线\n");
+                flag = 0;
+                sleep(1);
+                system("clear");
+            }
+        }
+        /* 关闭数据库 */
+        sqlite3_close(chatRoomDB);
+    }
+}
+
+/* 用户群聊函数 */
+static int groupChat(int socketfd, char *loginName)
+{
+    char groupName[DEFAULT_LOGIN_NAME];
+    bzero(groupName, sizeof(groupName));
+    char sendBuffer[BUFFER_SIZE];
+    bzero(sendBuffer, sizeof(sendBuffer));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    
+    sqlite3 * chatRoomDB = NULL;
+    char * ermsg = NULL;
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
+    int flag = 0;
+    pthread_t recv;
+    
+    char groupList[BUFFER_SIZE];
+    bzero(groupList, sizeof(groupList));
+    strncpy(groupList, loginName, sizeof(loginName) - 1);
+    strncat(groupList, "GroupList.db", strlen("GroupList.db") + 1);
+
+    while(1)
+    {
+        /* 打开群列表 */
+        /* 打开数据库 */
+        int ret = sqlite3_open(groupList, &chatRoomDB);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite open error");
+            exit(-1);
+        }
+        sprintf(sql, "select * from groupList");
+        char **result = NULL;
+        int row = 0;
+        sqlite3_get_table(chatRoomDB, sql, &result, &row, NULL, &ermsg);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite get table error");
+            exit(-1);
+        }
+        /* 打印群列表 */
+        printf("群列表\n");
+        for(int idx = 1; idx <= row; idx++)
+        {
+            printf("%s\n", result[idx]);
+        }
+        printf("----\n");
+        /* 选择群 */
+        bzero(groupName, sizeof(groupName));
+        printf("请选择群：\n");
+        scanf("%s", groupName);
+        if(strncmp(groupName, "q", sizeof(groupName)) == 0)
+        {
+            writeMessage(socketfd, groupName, strlen(groupName));
+            system("clear");
+            break;
+        }
+        /* 检查对象是否在群列表中 */
+        int found = 0;
+        sprintf(sql, "select * from grouplist where groupname = '%s'", groupName);
+        ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite open error");
+            exit(-1);
+        }
+        if(found == 0)
+        {
+            /* 群不存在 */
+            writeMessage(socketfd, "此群未创建", strlen("此群未创建"));
+            /* 接收服务器的响应 */
+            bzero(response, sizeof(response));
+            readMessage(socketfd, response, sizeof(response) - 1);
+            printf("此群未创建\n");
+            sleep(1);
+            system("clear");
+        }
+        else if(found == 1)
+        {
+            /* 群存在 */
+            writeMessage(socketfd, groupName, strlen(groupName));
+            /* 接收服务器的响应 */
+            bzero(response, sizeof(response));
+            readMessage(socketfd, response, sizeof(response) - 1);
+
+            /* 解析服务器的响应并进行处理 */
+            if(strncmp(response, "进入群聊", sizeof("进入群聊")) == 0)
+            {
+                printf("进入群聊\n");
+                flag = 1;
+                sleep(1);
+                system("clear");
+
+                pthread_create(&recv, NULL, recvMessage, (void *)&socketfd);
+                char sendCompleteBuffer[BUFFER_SIZE + 2 * DEFAULT_LOGIN_NAME];
+                bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
+                
+                while(flag)
+                {
+                    char c = '0';
+                    scanf("%s", sendBuffer);
+                    while ((c = getchar()) != EOF && c != '\n');
+                    if(strncmp(sendBuffer, "q", sizeof(sendBuffer)) == 0)
+                    {
+                        writeMessage(socketfd, sendBuffer, strlen(sendBuffer));
+                        flag = 0;
+                        system("clear");
+                        break;
+                    }
+                    else
+                    {
+                        bzero(sendCompleteBuffer, sizeof(sendCompleteBuffer));
+                        sprintf(sendCompleteBuffer, "%s: %s", loginName, sendBuffer);
+                        writeMessage(socketfd, sendCompleteBuffer, strlen(sendCompleteBuffer));
+                    }
+                }
+            }
+            else if(strncmp(response, "进入群聊失败", sizeof("进入群聊失败")) == 0)
+            {
+                printf("进入群聊失败\n");
                 flag = 0;
                 sleep(1);
                 system("clear");

@@ -36,6 +36,8 @@ enum FUNC_CHOICE
 {
     PRIVATE_CHAT = 1,
     FRIEND_ADD,
+    GROUP_CHAT,
+    GROUP_CREATE,
     INTERNAL_EXIT,
 };
 
@@ -103,7 +105,9 @@ static int userLogin(int socketfd, BalanceBinarySearchTree * onlineList, clientN
 /* 用户注册函数 */
 static void userRegister(int socketfd, char *loginName, char *loginPawd);
 /* 用户私聊函数 */
-static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, char *objectName, int *mode);
+static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode);
+/* 用户群聊函数 */
+static void userGroupChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode);
 
 /* 回调函数，用于处理查询结果 */
 int callback(void* data, int argc, char** argv, char** azColName) 
@@ -133,8 +137,6 @@ void * chatHander(void * arg)
     bzero(loginName, sizeof(loginName));
     char loginPawd[DEFAULT_LOGIN_PAWD];
     bzero(loginPawd, sizeof(loginPawd));
-    char objectName[DEFAULT_LOGIN_NAME];
-    bzero(objectName, sizeof(objectName));
     /* 创建客户端结点 */
     clientNode client;
     bzero(&client, sizeof(client));
@@ -239,12 +241,23 @@ void * chatHander(void * arg)
             {
             /* 私聊功能 */
             case PRIVATE_CHAT:
-                /* */
-                userPrivateChat(acceptfd, onlineList, objectName, &mode);
+                /* 用户私聊函数 */
+                userPrivateChat(acceptfd, onlineList, &mode);
                 break;
 
             /* 加好友功能 */
             case FRIEND_ADD:
+                
+                break;
+
+            /* 群聊功能 */
+            case GROUP_CHAT:
+                /* 用户群聊函数 */
+                userGroupChat(acceptfd, onlineList, &mode);
+                break;
+
+            /* 建群功能 */
+            case GROUP_CREATE:
                 
                 break;
             
@@ -258,54 +271,6 @@ void * chatHander(void * arg)
                 break;
             }
         }
-#if 0
-            sqlite3 *chat1db = NULL;
-            sqlite3 *chat2db = NULL;
-            int readBytes = read(acceptfd, recvBuffer, sizeof(recvBuffer) - 1);
-            int ret = 0;
-            if(balanceBinarySearchTreeIsContainAppointVal(onlineList, &recvBuffer))
-            {
-                write(acceptfd, "对方在线", strlen("对方在线"));
-                /* 存储当前客户端聊天记录文件名 */
-                strncat(clientHostBuffer, "->", strlen("->") + 1);
-                strncat(clientHostBuffer, recvBuffer, sizeof(recvBuffer));
-                strncat(clientHostBuffer, ".db", strlen(".db") + 1);
-                /* 存储对方客户端聊天记录文件名 */
-                strncat(clientGuestBuffer, recvBuffer, sizeof(recvBuffer));
-                strncat(clientGuestBuffer, "->", strlen("->") + 1);
-                // strncat(clientGuestBuffer, clientUsernameBuffer, sizeof(clientUsernameBuffer));
-                strncat(clientGuestBuffer, ".db", strlen(".db") + 1);
-            }
-            else if(!balanceBinarySearchTreeIsContainAppointVal(onlineList, &recvBuffer))
-            {
-                write(acceptfd, "对方不在线", strlen("对方不在线"));
-                break;
-            }
-
-            while(1)
-            {
-                /* 从客户端读取输入的文字 */
-                readBytes = read(acceptfd, recvBuffer, sizeof(recvBuffer) - 1);
-                if(readBytes < 0)
-                {
-                    perror("read error");
-                    break;
-                }
-                else if(readBytes == 0)
-                {
-                    printf("客户端下线\n");
-                    break;
-                }
-                else if(readBytes > 1)
-                {
-                    // databaseChatContentInsert(chat1db, clientHostBuffer, clientUsernameBuffer, recvBuffer);
-                    // databaseChatContentInsert(chat2db, clientGuestBuffer, clientUsernameBuffer, recvBuffer);
-                }
-            }
-            /* 关闭数据库链接 */
-            sqlite3_close(chat1db);
-            sqlite3_close(chat2db);
-#endif
     }
     pthread_exit(NULL);
 }
@@ -334,6 +299,26 @@ int main()
     char * ermsg = NULL;
     const char * sql = "create table if not exists user (id text primary key not null, password text not null)";
     ret = sqlite3_exec(chatRoomDB, sql, NULL, NULL, &ermsg);
+    if (ret != SQLITE_OK)
+    {
+        printf("create table error:%s\n", ermsg);
+        sqlite3_close(chatRoomDB);
+        pthread_mutex_destroy(&g_mutex);
+        // threadPoolDestroy(&pool);
+        exit(-1);
+    }
+
+    /* 打开数据库 */
+    ret = sqlite3_open("groupList.db", &chatRoomDB);
+    if (ret != SQLITE_OK)
+    {
+        perror("sqlite open error");
+        exit(-1);
+    }
+
+    /* 创建储存群信息的表 */
+    const char * sql1 = "create table if not exists groupList (groupname text not null, username text not null)";
+    ret = sqlite3_exec(chatRoomDB, sql1, NULL, NULL, &ermsg);
     if (ret != SQLITE_OK)
     {
         printf("create table error:%s\n", ermsg);
@@ -487,8 +472,10 @@ static int userExit(int socketfd, BalanceBinarySearchTree *onlineList, clientNod
 }
 
 /* 用户私聊函数 */
-static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, char *objectName, int *mode)
+static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode)
 {
+    char objectName[DEFAULT_LOGIN_NAME];
+    bzero(objectName, sizeof(objectName));
     char sendBuffer[BUFFER_SIZE];
     bzero(sendBuffer, sizeof(sendBuffer));
     while(1)
@@ -548,8 +535,111 @@ static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, c
             }
         }
     }
-      
-    
+}
+
+/* 用户群聊函数 */
+static void userGroupChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode)
+{
+    char groupName[DEFAULT_LOGIN_NAME];
+    bzero(groupName, sizeof(groupName));
+    char objectName[DEFAULT_LOGIN_NAME];
+    bzero(objectName, sizeof(objectName));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    char sendBuffer[BUFFER_SIZE];
+    bzero(sendBuffer, sizeof(sendBuffer));
+
+    sqlite3 * chatRoomDB = NULL;
+    char * ermsg = NULL;
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
+    char **result = NULL;
+    int row = 0;
+    int column = 0;
+    while(1)
+    {
+        int flag = 0;
+        /* 读取用户输入的群名 */
+        bzero(groupName, sizeof(groupName));
+        readMessage(socketfd, groupName, sizeof(groupName) - 1);
+        if(strncmp(groupName, "q", sizeof("q")) == 0)
+        {
+            *mode = 0;
+            break;
+        }
+        else if(strncmp(groupName, "此群未创建", sizeof("此群未创建")) == 0)
+        {
+            writeMessage(socketfd, "此群未创建", strlen("此群未创建"));
+        }
+        else
+        {
+            /* 打开数据库 */
+            int ret = sqlite3_open("groupList.db", &chatRoomDB);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                exit(-1);
+            }
+            sprintf(sql, "select * from groupList where groupname = '%s'", groupName);
+            sqlite3_get_table(chatRoomDB, sql, &result, &row, &column, &ermsg);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite get table error");
+                exit(-1);
+            }
+        }
+        /* 创建对象客户端结点 */
+        clientNode objclient;
+        bzero(&objclient, sizeof(objclient));
+        bzero(objclient.loginName, sizeof(objclient.loginName));
+        
+        AVLTreeNode *object = NULL;
+        int objectfd = 0;
+        int exit = 0;
+
+        if(row >= 1)
+        {
+            writeMessage(socketfd, "进入群聊", sizeof("进入群聊"));
+            flag= 1;
+            while(flag)
+            {
+                int ret = 0;
+                bzero(sendBuffer, sizeof(sendBuffer));
+                ret = read(socketfd, sendBuffer, sizeof(sendBuffer));
+                if(strncmp(sendBuffer, "q", sizeof("q")) == 0)
+                {
+                    writeMessage(socketfd, "退出群聊", sizeof("退出群聊"));
+                    flag = 0;
+                }
+                for(int idx = 1; idx <= row; idx++)
+                {
+                    bzero(objectName, sizeof(objectName));
+                    strncpy(objectName, result[idx * column + 1], sizeof(result[idx * column + 1]));
+                    /* 查看对方是否在线 */
+                    bzero(&objclient, sizeof(objclient));
+                    bzero(objclient.loginName, sizeof(objclient.loginName));
+                    strncpy(objclient.loginName, objectName, strlen(objectName));
+                    if(balanceBinarySearchTreeIsContainAppointVal(onlineList, (void *)&objclient))
+                    {
+                        object =  baseAppointValGetAVLTreeNode(onlineList, (void *)&objclient);
+                        objclient = *(clientNode *)(object->data);
+                        objectfd = objclient.communicateFd;
+                        if(objectfd != socketfd)
+                        {
+                            if(ret > 0 && strncmp(sendBuffer, "q", sizeof("q")) != 0)
+                            {
+                                writeMessage(objectfd, sendBuffer, strlen(sendBuffer));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else if(row < 1)
+        {
+            writeMessage(socketfd, "进入群聊失败", sizeof("进入群聊失败"));
+        }
+    }
 }
 
 /* 用户登录函数 */
