@@ -19,7 +19,7 @@
 #define DEFAULT_LOGIN_NAME  20
 #define DEFAULT_LOGIN_PAWD  16
 #define BUFFER_SIZE 300
-#define BUFFER_SQL          100
+#define BUFFER_SQL          150
 
 /* 主界面选择 */
 enum CLIENT_CHOICE
@@ -63,6 +63,8 @@ static int userExit(int socketfd);
 static int privateChat(int socketfd, char *loginName);
 /* 用户群聊函数 */
 static int groupChat(int socketfd, char *loginName);
+/* 建群 */
+static int createGroup(int socketfd, char *loginName);
 
 /* 回调函数，用于处理查询结果 */
 int callback(void* data, int argc, char** argv, char** azColName) 
@@ -256,7 +258,7 @@ int main()
 
             /* 建群 */
             case GROUP_CREATE:
-                
+                createGroup(socketfd, loginName);
                 break;
 
             /* 退出 */
@@ -749,5 +751,147 @@ static void writeData(int fd, int *data, int dataSize)
         perror("write error");
         close(fd);
         exit(-1);
+    }
+}
+
+/* 建群 */
+static int createGroup(int socketfd, char *loginName)
+{
+    char groupName[DEFAULT_LOGIN_NAME];
+    bzero(groupName, sizeof(groupName));
+    char username[DEFAULT_LOGIN_NAME];
+    bzero(username, sizeof(username));
+    char loginname[DEFAULT_LOGIN_NAME];
+    bzero(loginname, sizeof(loginname));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    char choice[DEFAULT_LOGIN_NAME];
+    bzero(choice, sizeof(choice));
+    
+    sqlite3 * chatRoomDB = NULL;
+    char * ermsg = NULL;
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
+    
+    pthread_t recv;
+    
+    char groupList[BUFFER_SIZE];
+    bzero(groupList, sizeof(groupList));
+    strncpy(groupList, loginName, sizeof(loginName) - 1);
+    strncpy(loginname, loginName, sizeof(loginName) - 1);
+    strncat(groupList, "GroupList.db", strlen("GroupList.db") + 1);
+    int ret = 0;
+
+    while(1)
+    {
+        int flag = 0;
+        /* 打开群列表 */
+        /* 打开数据库 */
+        ret = sqlite3_open(groupList, &chatRoomDB);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite open error");
+            exit(-1);
+        }
+        sprintf(sql, "select * from groupList");
+        char **result = NULL;
+        int row = 0;
+        sqlite3_get_table(chatRoomDB, sql, &result, &row, NULL, &ermsg);
+        if(ret != SQLITE_OK)
+        {
+            perror("sqlite get table error");
+            exit(-1);
+        }
+        /* 建群 */
+        printf("输入群名：\n");
+        bzero(groupName, sizeof(groupName));
+        scanf("%s", groupName);
+        if(strncmp(groupName, "q", sizeof("q")) == 0)
+        {
+            writeMessage(socketfd, groupName, strlen(groupName));
+            system("clear");
+            break;
+        }
+        else
+        {
+            /* 检查对象是否在群列表中 */
+            int found = 0;
+            sprintf(sql, "select * from grouplist where groupname = '%s'", groupName);
+            ret = sqlite3_exec(chatRoomDB, sql, callback, &found, &ermsg);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                exit(-1);
+            }
+            if(found == 0)
+            {
+                /* 群不存在 */
+                writeMessage(socketfd, "此群未创建", sizeof("此群未创建"));
+                /* 接收服务器的响应 */
+                bzero(response, sizeof(response));
+                readMessage(socketfd, response, sizeof(response) - 1);
+                if(strncmp(response, "输入用户名", sizeof("输入用户名")))
+                {
+                    printf("1\n");
+                    sleep(2);
+                    writeMessage(socketfd, loginname, sizeof(loginname));
+                    bzero(response, sizeof(response));
+                    readMessage(socketfd, response, sizeof(response) - 1);
+                    
+                    if(strncmp(response, "创建完成", sizeof("创建完成")))
+                    {
+                        printf("%s\n", response);
+                    }
+                }
+                sleep(1);
+                system("clear");
+            }
+            else if(found == 1)
+            {
+                printf("该群已存在\n");
+                sleep(1);
+                system("clear");
+            }
+        }
+        
+        printf("是否添加用户：\n");
+        bzero(choice, sizeof(choice));
+        scanf("%s", choice);
+        writeMessage(socketfd, choice, strlen(choice));
+        bzero(choice, sizeof(choice));
+        readMessage(socketfd, choice, sizeof(choice) - 1);
+        if(strncmp(choice, "y", sizeof("y")))
+        {
+            flag = 1;
+            system("clear");
+        }
+        else if(strncmp(choice, "n", sizeof("n")))
+        {
+            flag = 0;
+            break;
+        }
+        if(flag)
+        {
+            printf("选择要添加的用户：\n");
+            bzero(username, sizeof(username));
+            scanf("%s", username);
+            if(strncmp(username, loginName, sizeof(loginName)))
+            {
+                printf("你已被添加\n");
+                sleep(1);
+            }
+            else
+            {
+                writeMessage(socketfd, username, strlen(username));
+                bzero(response, sizeof(response));
+                readMessage(socketfd, response, sizeof(response));
+                if(strncmp(groupName, "添加完成", sizeof("添加完成")))
+                {
+                    printf("%s\n", response);
+                }
+            }
+        }
+        /* 关闭数据库 */
+        sqlite3_close(chatRoomDB);
     }
 }

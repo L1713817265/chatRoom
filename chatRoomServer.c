@@ -21,7 +21,7 @@
 
 #define DEFAULT_LOGIN_NAME  20
 #define DEFAULT_LOGIN_PAWD  16
-#define BUFFER_SQL          100
+#define BUFFER_SQL          150
 
 /* 主界面选择 */
 enum CLIENT_CHOICE
@@ -108,6 +108,8 @@ static void userRegister(int socketfd, char *loginName, char *loginPawd);
 static void userPrivateChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode);
 /* 用户群聊函数 */
 static void userGroupChat(int socketfd, BalanceBinarySearchTree *onlineList, int *mode);
+/* 建群 */
+static void createGroup(int socketfd, BalanceBinarySearchTree *onlineList, int *mode);
 
 /* 回调函数，用于处理查询结果 */
 int callback(void* data, int argc, char** argv, char** azColName) 
@@ -258,7 +260,8 @@ void * chatHander(void * arg)
 
             /* 建群功能 */
             case GROUP_CREATE:
-                
+                /* 建群 */
+                createGroup(acceptfd, onlineList, &mode);
                 break;
             
             /* 退出功能 */
@@ -932,7 +935,103 @@ static void RegesiterContentInsert(sqlite3 *db, char *id, char *password)
     sqlite3_finalize(stmt);
 }
 
+/* 建群 */
+static void createGroup(int socketfd, BalanceBinarySearchTree *onlineList, int *mode)
+{
+    char groupName[DEFAULT_LOGIN_NAME];
+    bzero(groupName, sizeof(groupName));
+    char objectName[DEFAULT_LOGIN_NAME];
+    bzero(objectName, sizeof(objectName));
+    char response[BUFFER_SIZE];
+    bzero(response, sizeof(response));
+    char sendBuffer[BUFFER_SIZE];
+    bzero(sendBuffer, sizeof(sendBuffer));
+    char choice[DEFAULT_LOGIN_NAME];
+    bzero(choice, sizeof(choice));
 
+    sqlite3 * chatRoomDB = NULL;
+    char * ermsg = NULL;
+    char sql[BUFFER_SQL];
+    bzero(sql, sizeof(sql));
+    char **result = NULL;
+    int row = 0;
+    int column = 0;
+    int ret = 0;
+    while(1)
+    {
+        int flag = 0;
+        /* 读取用户输入的群名 */
+        bzero(groupName, sizeof(groupName));
+        readMessage(socketfd, groupName, sizeof(groupName) - 1);
+        if(strncmp(groupName, "q", sizeof("q")) == 0)
+        {
+            *mode = 0;
+            break;
+        }
+        else if(strncmp(groupName, "此群未创建", sizeof("此群未创建")) == 0)
+        {
+            writeMessage(socketfd, "输入用户名", sizeof("输入用户名"));
+            bzero(objectName, sizeof(objectName));
+            readMessage(socketfd, objectName, sizeof(objectName) - 1);
+            /* 打开数据库 */
+            ret = sqlite3_open("groupList.db", &chatRoomDB);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                exit(-1);
+            }
+            sprintf(sql, "select * from groupList where groupname = '%s' and username = '%s'", groupName, objectName);
+            sqlite3_get_table(chatRoomDB, sql, &result, &row, &column, &ermsg);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite get table error");
+                exit(-1);
+            }
+            writeMessage(socketfd, "创建完成", sizeof("创建完成"));
+        }
+        bzero(choice, sizeof(choice));
+        readMessage(socketfd, choice, sizeof(choice) - 1);
+        if(strncmp(choice, "y", sizeof("y")))
+        {
+            writeMessage(socketfd, choice, strlen(choice));
+            flag = 1;
+        }
+        else if(strncmp(choice, "n", sizeof("n")))
+        {
+            writeMessage(socketfd, choice, strlen(choice));
+            flag = 0;
+            break;
+        }
+        if(flag)
+        {
+            /* 创建对象客户端结点 */
+            clientNode objclient;
+            bzero(&objclient, sizeof(objclient));
+            bzero(objclient.loginName, sizeof(objclient.loginName));
+            
+            AVLTreeNode *object = NULL;
+            int objectfd = 0;
+
+            bzero(objectName, sizeof(objectName));
+            readMessage(socketfd, objectName, sizeof(objectName));
+            /* 打开数据库 */
+            ret = sqlite3_open("groupList.db", &chatRoomDB);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite open error");
+                exit(-1);
+            }
+            sprintf(sql, "select * from groupList where groupname = '%s' and username = '%s'", groupName, objectName);
+            sqlite3_get_table(chatRoomDB, sql, &result, &row, &column, &ermsg);
+            if(ret != SQLITE_OK)
+            {
+                perror("sqlite get table error");
+                exit(-1);
+            }
+            writeMessage(socketfd, "添加完成", strlen("添加完成"));
+        }
+    }
+}
 
 
 
